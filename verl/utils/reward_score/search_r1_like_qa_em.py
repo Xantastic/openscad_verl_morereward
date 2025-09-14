@@ -87,6 +87,9 @@ def extract_solution(solution_str):
 
 
 def count_answer_tags(text):
+
+    
+
     opening_tags = text.count("<answer>")
     closing_tags = text.count("</answer>")
 
