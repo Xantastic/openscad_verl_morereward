@@ -3,6 +3,10 @@ import json
 import math
 import os
 
+
+# 将open-r1数据集转换为verl-main所需格式
+
+
 def process_parquet_files():
     # 从systemprompt.txt文件读取系统提示
     with open('systemprompt.txt', 'r', encoding='utf-8') as file:

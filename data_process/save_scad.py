@@ -1,6 +1,9 @@
 import json
 import os
 
+
+# 验证数据中的SCAD代码保存为scad文件后，是否可以在Openscad软件正确渲染
+
 def save_scad_from_json(json_file_path, output_file_name):
     """
     从 JSON 文件中读取 reward_model 的 ground_truth 并保存为 .scad 文件

@@ -10,6 +10,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from utils.normalize import normalize_openscad_to_stl
 from utils import compute_iou
 
+
+# 对verl-main数据集进行SCAD编译验证，删除无法编译的行数据（但异步过滤时仍然有问题）
+
 # 全局线程池执行器用于异步处理
 compile_executor = None
 

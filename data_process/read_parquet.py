@@ -2,6 +2,8 @@ import pandas as pd
 import json
 import numpy as np
 
+# 读取过滤后.parquet文件，查看数据结构，并将第一行数据保存为JSON文件
+
 # 读取parquet文件
 file_path = '/home/xa/TempCodes/openscad_verl/transfer_data_verl/train-00001-of-00008.parquet'
 df = pd.read_parquet(file_path)

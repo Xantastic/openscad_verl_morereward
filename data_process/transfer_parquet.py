@@ -2,6 +2,9 @@ import pandas as pd
 import json
 import math
 
+# Hugging Face原始数据的的parquet文件处理脚本，转变为open-r1所需格式
+
+
 def process_parquet_files():
     # 读取所有parquet文件
     parquet_files = [
