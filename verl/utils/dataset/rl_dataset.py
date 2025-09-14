@@ -100,9 +100,13 @@ class RLHFDataset(Dataset):
 
         self.cache_dir = os.path.expanduser(config.get("cache_dir", "~/.cache/verl/rlhf"))
         self.prompt_key = config.get("prompt_key", "prompt")
+        self.response_key = config.get("response_key", "response")
+        self.specific_key = config.get("specific_key", "specificity")
         self.image_key = config.get("image_key", "images")
         self.video_key = config.get("video_key", "videos")
-        self.max_prompt_length = config.get("max_prompt_length", 1024)
+        self.max_prompt_length = config.get("max_prompt_length", 512)
+        self.max_response_length = config.get("max_response_length", 1024) * 2
+        
         self.return_raw_chat = config.get("return_raw_chat", False)
         self.return_full_prompt = config.get("return_full_prompt", False)
         self.truncation = config.get("truncation", "error")
@@ -146,6 +150,8 @@ class RLHFDataset(Dataset):
             tokenizer = self.tokenizer
             processor = self.processor
             prompt_key = self.prompt_key
+            response_key = self.response_key
+            specific_key = self.specific_key
             image_key = self.image_key
             video_key = self.video_key
 
@@ -179,10 +185,29 @@ class RLHFDataset(Dataset):
                         )
                     )
 
+                def doc2len_res(doc) -> int:
+                    return len(
+                        doc[response_key]
+                    )
+
+                def doc2highprompt(doc) -> str:
+                    return doc[specific_key]
             dataframe = dataframe.filter(
                 lambda doc: doc2len(doc) <= self.max_prompt_length,
                 num_proc=self.num_workers,
                 desc=f"Filtering prompts longer than {self.max_prompt_length} tokens",
+            )
+
+            # dataframe = dataframe.filter(
+            #     lambda doc: doc2len_res(doc) <= self.max_response_length,
+            #     num_proc=self.num_workers,
+            #     desc=f"Filtering response longer than {self.max_response_length} tokens",
+            # )
+
+            dataframe = dataframe.filter(
+                lambda doc: doc2highprompt(doc) == "high",
+                num_proc=self.num_workers,
+                desc=f"Filtering specific == high tokens",
             )
 
             print(f"filter dataset len: {len(dataframe)}")
