@@ -24,6 +24,7 @@ def default_compute_score(
     sandbox_fusion_url=None,
     concurrent_semaphore=None,
     memory_limit_mb=None,
+    
 ):
     """Compute the score for a given solution based on the data source.
 
@@ -47,8 +48,14 @@ def default_compute_score(
 
     elif "scad" in data_source:
         from . import scad
+        from . import scad_train
 
-        res = scad.compute_score(solution_str, ground_truth)
+        if "test" in data_source:
+            # print("test")
+            res = scad.compute_score(solution_str, ground_truth)
+        else:
+            # print("train")
+            res = scad_train.compute_score(solution_str, ground_truth)
 
     elif data_source in ["lighteval/MATH", "DigitalLearningGmbH/MATH-lighteval", "HuggingFaceH4/MATH-500"]:
         from . import math_reward

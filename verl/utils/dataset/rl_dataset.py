@@ -204,11 +204,11 @@ class RLHFDataset(Dataset):
             #     desc=f"Filtering response longer than {self.max_response_length} tokens",
             # )
 
-            dataframe = dataframe.filter(
-                lambda doc: doc2highprompt(doc) == "high",
-                num_proc=self.num_workers,
-                desc=f"Filtering specific == high tokens",
-            )
+            # dataframe = dataframe.filter(
+            #     lambda doc: doc2highprompt(doc) == "high",
+            #     num_proc=self.num_workers,
+            #     desc=f"Filtering specific == high tokens",
+            # )
 
             print(f"filter dataset len: {len(dataframe)}")
         return dataframe

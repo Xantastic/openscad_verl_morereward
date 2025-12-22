@@ -24,12 +24,11 @@ from verl.workers.reward_manager import register
 from verl.workers.reward_manager.abstract import AbstractRewardManager
 
 
-def _process_single_item(args):
-    """处理单个数据项的函数，用于进程池调用"""
+def _process_single_item_scad(args):
+    """Process single data item for multiprocessing pool"""
     i, data_item, tokenizer, compute_score, reward_fn_key = args
     
     try:
-        # 提取数据项信息
         prompt_ids = data_item.batch["prompts"]
         prompt_length = prompt_ids.shape[-1]
 
@@ -40,17 +39,16 @@ def _process_single_item(args):
         valid_response_length = data_item.batch["attention_mask"][prompt_length:].sum()
         valid_response_ids = response_ids[:valid_response_length]
 
-        # 解码
         prompt_str = tokenizer.decode(valid_prompt_ids, skip_special_tokens=True)
         response_str = tokenizer.decode(valid_response_ids, skip_special_tokens=True)
 
-        ground_truth = data_item.non_tensor_batch["reward_model"]["ground_truth"]
+        # ground_truth = data_item.non_tensor_batch["reward_model"]["ground_truth"]
+        ground_truth = data_item.non_tensor_batch["extra_info"]["answer"]
         data_source = data_item.non_tensor_batch[reward_fn_key]
         extra_info = data_item.non_tensor_batch.get("extra_info", {})
         num_turns = data_item.non_tensor_batch.get("__num_turns__", None)
         extra_info["num_turns"] = num_turns
 
-        # 计算分数 - 这是CPU密集型任务，并行处理的核心
         score = compute_score(
             data_source=data_source,
             solution_str=response_str,
@@ -58,7 +56,6 @@ def _process_single_item(args):
             extra_info=extra_info,
         )
 
-        # 返回处理结果
         return {
             "index": i,
             "valid_response_length": valid_response_length,
@@ -69,7 +66,7 @@ def _process_single_item(args):
             "data_source": data_source
         }
     except Exception as e:
-        print(f"处理数据项 {i} 时出错: {str(e)}")
+        print(f"Error processing data item {i}: {str(e)}")
         return None
 
 
@@ -80,26 +77,28 @@ class ScadRewardManager(AbstractRewardManager):
     def __init__(self, tokenizer, num_examine, compute_score=None, reward_fn_key="data_source", 
                  max_workers=None) -> None:
         """
-        初始化奖励管理器，支持并行处理
+        Initialize the reward manager with multiprocessing support
 
         Args:
-            tokenizer: 用于解码的tokenizer
-            num_examine: 用于调试打印的样本数量
-            compute_score: 计算分数的函数，默认为default_compute_score
-            reward_fn_key: 获取数据源的键名
-            max_workers: 最大进程数，None则使用CPU核心数
+            tokenizer: Tokenizer for decoding
+            num_examine: Number of samples to print for debugging
+            compute_score: Function to compute scores, defaults to default_compute_score
+            reward_fn_key: Key to access data source
+            max_workers: Maximum number of worker processes, defaults to CPU count
         """
         self.tokenizer = tokenizer
         self.num_examine = num_examine
         self.compute_score = compute_score or default_compute_score
         self.reward_fn_key = reward_fn_key
-        # 设置进程池大小，默认使用CPU核心数
-        self.max_workers = max_workers or multiprocessing.cpu_count()
+        self.max_workers = 10 #max_workers or multiprocessing.cpu_count() // 2
+        # print("max_workers:" + str(self.max_workers))
+        # print("*************************")
+
 
     def __call__(self, data: DataProto, return_dict: bool = False) -> torch.Tensor | dict[str, Any]:
-        """处理数据并计算奖励，使用多进程并行处理compute_score"""
+        """Process data and compute rewards with multiprocessing"""
 
-        # 如果已有rm_scores，直接返回
+        # If there is rm score, we directly return rm score. Otherwise, we compute via rm_score_fn
         if "rm_scores" in data.batch.keys():
             if return_dict:
                 reward_extra_keys = data.meta_info.get("reward_extra_keys", [])
@@ -112,25 +111,24 @@ class ScadRewardManager(AbstractRewardManager):
         reward_extra_info = defaultdict(list)
         already_print_data_sources = defaultdict(int)
 
-        # 准备并行任务参数
+        # Prepare tasks for parallel processing
         tasks = [
             (i, data[i], self.tokenizer, self.compute_score, self.reward_fn_key)
             for i in range(len(data))
         ]
 
-        # 使用进程池并行处理
+        # Process in parallel using multiprocessing pool
         with Pool(processes=self.max_workers) as pool:
-            # 处理结果，保持原始顺序
-            for result in pool.imap(_process_single_item, tasks):
+            for result in pool.imap(_process_single_item_scad, tasks):
                 if result is None:
                     continue
 
-                # 更新奖励张量
+                # Update reward tensor
                 i = result["index"]
                 valid_response_length = result["valid_response_length"]
                 score = result["score"]
                 
-                # 处理分数结果
+                # Handle score result
                 if isinstance(score, dict):
                     reward = score["score"]
                     for key, value in score.items():
@@ -140,7 +138,7 @@ class ScadRewardManager(AbstractRewardManager):
                     
                 reward_tensor[i, valid_response_length - 1] = reward
 
-                # 控制打印信息
+                # Control debug printing
                 data_source = result["data_source"]
                 if already_print_data_sources[data_source] < self.num_examine:
                     already_print_data_sources[data_source] += 1

@@ -17,6 +17,25 @@ Note that we don't combine the main with ray_trainer as ray_trainer is used by o
 
 import os
 import socket
+CUSTOM_HF_CACHE_ROOT = "/data/zhenningli/huggingface/"  # 示例路径
+# --------------------------
+
+# 第二步：确保缓存目录存在（避免“目录不存在”报错）
+os.makedirs(CUSTOM_HF_CACHE_ROOT, exist_ok=True)
+# 赋予读写权限（可选，防止权限不足）
+os.chmod(CUSTOM_HF_CACHE_ROOT, 0o755)  # 755 表示所有者可读写执行，其他人可读执行
+
+# 第三步：设置所有 Hugging Face 相关的缓存环境变量
+# 1. transformers 库（模型、分词器等缓存）
+os.environ["TRANSFORMERS_CACHE"] = os.path.join(CUSTOM_HF_CACHE_ROOT, "transformers")
+# 2. huggingface_hub 库（Hub 下载/上传的文件缓存）
+os.environ["HUGGINGFACE_HUB_CACHE"] = os.path.join(CUSTOM_HF_CACHE_ROOT, "hub")
+# 3. datasets 库（数据集缓存，重点解决之前的配额问题）
+os.environ["DATASETS_CACHE"] = os.path.join(CUSTOM_HF_CACHE_ROOT, "datasets")
+# 4. 旧版模型缓存（兼容部分老库）
+os.environ["PYTORCH_PRETRAINED_BERT_CACHE"] = os.path.join(CUSTOM_HF_CACHE_ROOT, "transformers")
+# 5. 评估指标缓存（如 evaluate 库）
+os.environ["EVALUATE_CACHE"] = os.path.join(CUSTOM_HF_CACHE_ROOT, "evaluate")
 
 import hydra
 import ray

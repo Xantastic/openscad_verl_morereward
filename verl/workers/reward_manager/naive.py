@@ -14,6 +14,8 @@
 
 from collections import defaultdict
 from typing import Any
+import multiprocessing
+from multiprocessing import Pool
 
 import torch
 
@@ -23,11 +25,58 @@ from verl.workers.reward_manager import register
 from verl.workers.reward_manager.abstract import AbstractRewardManager
 
 
+def _process_single_item_naive(args):
+    """Process single data item for multiprocessing pool"""
+    i, data_item, tokenizer, compute_score, reward_fn_key = args
+    
+    try:
+        prompt_ids = data_item.batch["prompts"]
+        prompt_length = prompt_ids.shape[-1]
+
+        valid_prompt_length = data_item.batch["attention_mask"][:prompt_length].sum()
+        valid_prompt_ids = prompt_ids[-valid_prompt_length:]
+
+        response_ids = data_item.batch["responses"]
+        valid_response_length = data_item.batch["attention_mask"][prompt_length:].sum()
+        valid_response_ids = response_ids[:valid_response_length]
+
+        prompt_str = tokenizer.decode(valid_prompt_ids, skip_special_tokens=True)
+        response_str = tokenizer.decode(valid_response_ids, skip_special_tokens=True)
+
+        # ground_truth = data_item.non_tensor_batch["reward_model"]["ground_truth"]
+        ground_truth = data_item.non_tensor_batch["extra_info"]["answer"]
+        data_source = data_item.non_tensor_batch[reward_fn_key]
+        extra_info = data_item.non_tensor_batch.get("extra_info", {})
+        num_turns = data_item.non_tensor_batch.get("__num_turns__", None)
+        extra_info["num_turns"] = num_turns
+
+        score = compute_score(
+            data_source=data_source,
+            solution_str=response_str,
+            ground_truth=ground_truth,
+            extra_info=extra_info,
+        )
+
+        return {
+            "index": i,
+            "valid_response_length": valid_response_length,
+            "score": score,
+            "prompt_str": prompt_str,
+            "response_str": response_str,
+            "ground_truth": ground_truth,
+            "data_source": data_source
+        }
+    except Exception as e:
+        print(f"Error processing data item {i}: {str(e)}")
+        return None
+
+
 @register("naive")
 class NaiveRewardManager(AbstractRewardManager):
-    """The reward manager."""
+    """The reward manager with multiprocessing support."""
 
-    def __init__(self, tokenizer, num_examine, compute_score=None, reward_fn_key="data_source") -> None:
+    def __init__(self, tokenizer, num_examine, compute_score=None, reward_fn_key="data_source", 
+                 max_workers=None) -> None:
         """
         Initialize the NaiveRewardManager instance.
 
@@ -37,14 +86,18 @@ class NaiveRewardManager(AbstractRewardManager):
             compute_score: A function to compute the reward score. If None, `default_compute_score` will be used.
             reward_fn_key: The key used to access the data source in the non-tensor batch data. Defaults to
                 "data_source".
+            max_workers: Maximum number of worker processes. If None, uses CPU count.
         """
-        self.tokenizer = tokenizer  # Store the tokenizer for decoding token IDs
-        self.num_examine = num_examine  # the number of batches of decoded responses to print to the console
+        self.tokenizer = tokenizer
+        self.num_examine = num_examine
         self.compute_score = compute_score or default_compute_score
-        self.reward_fn_key = reward_fn_key  # Store the key for accessing the data source
+        self.reward_fn_key = reward_fn_key
+        self.max_workers = 10 # max_workers or multiprocessing.cpu_count()
+        # print("max_workers:" + str(self.max_workers))
+        # print("*************************")
 
     def __call__(self, data: DataProto, return_dict: bool = False) -> torch.Tensor | dict[str, Any]:
-        """We will expand this function gradually based on the available datasets"""
+        """Process data and compute rewards with multiprocessing"""
 
         # If there is rm score, we directly return rm score. Otherwise, we compute via rm_score_fn
         if "rm_scores" in data.batch.keys():
@@ -57,63 +110,47 @@ class NaiveRewardManager(AbstractRewardManager):
 
         reward_tensor = torch.zeros_like(data.batch["responses"], dtype=torch.float32)
         reward_extra_info = defaultdict(list)
+        already_print_data_sources = defaultdict(int)
 
-        already_print_data_sources = {}
+        # Prepare tasks for parallel processing
+        tasks = [
+            (i, data[i], self.tokenizer, self.compute_score, self.reward_fn_key)
+            for i in range(len(data))
+        ]
 
-        for i in range(len(data)):
-            data_item = data[i]  # DataProtoItem
+        # Process in parallel using multiprocessing pool
+        with Pool(processes=self.max_workers) as pool:
+            for result in pool.imap(_process_single_item_naive, tasks, chunksize=4):
+                if result is None:
+                    continue
 
-            prompt_ids = data_item.batch["prompts"]
-
-            prompt_length = prompt_ids.shape[-1]
-
-            valid_prompt_length = data_item.batch["attention_mask"][:prompt_length].sum()
-            valid_prompt_ids = prompt_ids[-valid_prompt_length:]
-
-            response_ids = data_item.batch["responses"]
-            valid_response_length = data_item.batch["attention_mask"][prompt_length:].sum()
-            valid_response_ids = response_ids[:valid_response_length]
-
-            # decode
-            prompt_str = self.tokenizer.decode(valid_prompt_ids, skip_special_tokens=True)
-            response_str = self.tokenizer.decode(valid_response_ids, skip_special_tokens=True)
-
-            ground_truth = data_item.non_tensor_batch["reward_model"]["ground_truth"]
-            data_source = data_item.non_tensor_batch[self.reward_fn_key]
-            extra_info = data_item.non_tensor_batch.get("extra_info", {})
-            num_turns = data_item.non_tensor_batch.get("__num_turns__", None)
-            extra_info["num_turns"] = num_turns
-
-            score = self.compute_score(
-                data_source=data_source,
-                solution_str=response_str,
-                ground_truth=ground_truth,
-                extra_info=extra_info,
-            )
-
-            if isinstance(score, dict):
-                reward = score["score"]
-                # Store the information including original reward
-                for key, value in score.items():
-                    reward_extra_info[key].append(value)
-            else:
-                reward = score
-
-            reward_tensor[i, valid_response_length - 1] = reward
-
-            if data_source not in already_print_data_sources:
-                already_print_data_sources[data_source] = 0
-
-            if already_print_data_sources[data_source] < self.num_examine:
-                already_print_data_sources[data_source] += 1
-                print("[prompt]", prompt_str)
-                print("[response]", response_str)
-                print("[ground_truth]", ground_truth)
+                # Update reward tensor
+                i = result["index"]
+                valid_response_length = result["valid_response_length"]
+                score = result["score"]
+                
+                # Handle score result
                 if isinstance(score, dict):
+                    reward = score["score"]
                     for key, value in score.items():
-                        print(f"[{key}]", value)
+                        reward_extra_info[key].append(value)
                 else:
-                    print("[score]", score)
+                    reward = score
+                    
+                reward_tensor[i, valid_response_length - 1] = reward
+
+                # Control debug printing
+                data_source = result["data_source"]
+                if already_print_data_sources[data_source] < self.num_examine:
+                    already_print_data_sources[data_source] += 1
+                    print("[prompt]", result["prompt_str"])
+                    print("[response]", result["response_str"])
+                    print("[ground_truth]", result["ground_truth"])
+                    if isinstance(score, dict):
+                        for key, value in score.items():
+                            print(f"[{key}]", value)
+                    else:
+                        print("[score]", score)
 
         if return_dict:
             return {

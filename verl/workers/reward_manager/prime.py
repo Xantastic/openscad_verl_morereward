@@ -42,7 +42,7 @@ async def single_compute_score(evaluation_func, completion, reference, task, tas
 
 
 async def parallel_compute_score_async(
-    evaluation_func, completions, references, tasks, extra_info=None, num_processes=64
+    evaluation_func, completions, references, tasks, extra_info=None, num_processes=16
 ):
     if extra_info is None:
         extra_info = [None] * len(tasks)
@@ -87,7 +87,7 @@ async def parallel_compute_score_async(
     return scores
 
 
-def run_reward_scoring(evaluation_func, completions, references, tasks, extra_info=None, num_processes=64):
+def run_reward_scoring(evaluation_func, completions, references, tasks, extra_info=None, num_processes=16):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
@@ -137,7 +137,7 @@ class PrimeRewardManager(AbstractRewardManager):
                 references=ground_truth,
                 tasks=data_sources,
                 extra_info=extra_info,
-                num_processes=64,
+                num_processes=16,
             )
         except asyncio.TimeoutError:
             print("[Timeout] Global reward scoring timed out. Setting all as 0.")
